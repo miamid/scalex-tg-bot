@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ScaleX</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="img/logo-white-wide-1.svg">
+    <style>
+        body {
+            background: #f5f6f7;
+            color: #222;
+            font-family: 'Inter', Arial, sans-serif;
+            margin: 0;
+        }
+
+        #app {
+            max-width: 420px;
+            margin: 2rem auto;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px #0001;
+            padding: 2rem;
+            margin-top: 3rem;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            margin: .5rem 0;
+            padding: 1rem;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 10px;
+            background: #229ED9;
+            color: #fff;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+
+        .btn.secondary {
+            background: #eee;
+            color: #444;
+            border: 1px solid #ddd;
+        }
+
+        .btn:active {
+            background: #1a7ba6;
+        }
+
+        .center {
+            text-align: center;
+        }
+
+        .input {
+            width: 90%;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: 1px solid #bbb;
+            margin: .5rem 0 1rem 0;
+            font-size: 1.1rem;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            background: #f7f8fa;
+            padding: 1em;
+            border-radius: 8px;
+        }
+
+        .mb {
+            margin-bottom: 1.2rem;
+        }
+
+        .loading {
+            color: #888;
+            text-align: center;
+            font-size: 1.2em;
+        }
+
+        .error {
+            color: #b32d2e;
+            background: #fff4f3;
+            border: 1px solid #f5b3b2;
+            padding: 0.7em 1em;
+            border-radius: 8px;
+            margin-bottom: 1em;
+        }
+
+        @media (max-width: 520px) {
+            #app {
+                max-width: 98vw;
+                padding: 1rem;
+                margin-top: 3rem;
+            }
+        }
+    </style>
+</head>
+<body>
+  <header id="header" style="
+      position: fixed;
+      top: 10px;
+      left: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 1000;">
+      <img src="img/logo-white-wide-1.svg" alt="Logo"
+           style="
+             height: 25px;
+             width: auto;
+             cursor: pointer;
+             opacity: 0.9;
+             transition: opacity 0.2s ease;" id="logo">
+  </header>
+<div id="app">
+
+</div>
+
+<script>
+    const NETWORK_API_KEY = "pFSigdAS5qyihTcYr4w"; //
+    // ---- State + Persistence---
+    const state = {
+        user: JSON.parse(localStorage.getItem('affiliateUser') || '{"api_key": null, "authorized": false}'),
+        offers: [],
+        invoices: [],
+        currentOffer: null
+    };
+
+    function saveUser() {
+        localStorage.setItem('affiliateUser', JSON.stringify(state.user));
+    }
+
+    function resetUser() {
+        state.user = {api_key: null, authorized: false};
+        saveUser();
+    }
+
+    // ---- Core API ----
+    const Core = {
+        apiUrl: 'https://api.eflow.team/v1/affiliates',
+        networkUrl: 'https://api.eflow.team/v1/networks',
+
+        getHeaders() {
+            return {
+                'X-Eflow-API-Key': state.user.api_key || '',
+                'Content-Type': 'application/json'
+            };
+        },
+
+        getNetworkHeaders() {
+            return {
+                'X-Eflow-API-Key': NETWORK_API_KEY || '',
+                'Content-Type': 'application/json'
+            };
+        },
+
+        async validateKey(apiKey) {
+            const resp = await fetch(`${this.apiUrl}/affiliate`, {
+                headers: {
+                    'X-Eflow-API-Key': apiKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+            return resp.ok;
+        },
+
+        async getAllOffers() {
+            let allOffers = [];
+            let page = 1;
+            const pageSize = 2000; //
+            while (true) {
+                const resp = await fetch(`${this.apiUrl}/alloffers?page=${page}&page_size=${pageSize}`, {
+                    method: 'GET',
+                    headers: this.getHeaders()
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                const data = await resp.json();
+                const offers = data.offers || [];
+                allOffers.push(...offers);
+                //
+                if (!data.paging || offers.length < pageSize) break;
+                page++;
+            }
+            return allOffers;
+        },
+
+      async getAllInvoices() {
+            let allInvoices = [];
+            let page = 1;
+            const pageSize = 50;
+            while (true) {
+                const resp = await fetch(`${this.apiUrl}/billings/affiliates/invoicestable?page=${page}&page_size=${pageSize}`, {
+                    method: 'POST',
+                    headers: this.getHeaders(),
+                    body: JSON.stringify({ filters: {} })
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                const data = await resp.json();
+                const invoices = data.invoices || [];
+                allInvoices.push(...invoices);
+                if (!data.paging || invoices.length < pageSize) break;
+                page++;
+            }
+            return {
+                invoices: allInvoices
+            };
+        },
+
+        async getAllPostbacks() {
+            let allPixels = [];
+            let page = 1;
+            const pageSize = 50; //
+            while (true) {
+                const resp = await fetch(`${this.apiUrl}/pixels?page=${page}&page_size=${pageSize}`, {
+                    headers: this.getHeaders()
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                const data = await resp.json();
+                const pixels = data.pixels || [];
+                allPixels.push(...pixels);
+                if (!data.paging || pixels.length < pageSize) break;
+                page++;
+            }
+            return allPixels;
+        },
+
+        // --- Net. offers ---
+        async getNetworkOffers() {
+            if (!NETWORK_API_KEY) return [];
+
+            let allOffers = [];
+            let page = 1;
+            const pageSize = 2000; //
+
+            while (true) {
+                const resp = await fetch(`${this.networkUrl}/offerstable?page=${page}&page_size=${pageSize}`, {
+                    method: 'POST',
+                    headers: this.getNetworkHeaders(),
+                    body: JSON.stringify({ filters: {} })
+                });
+
+                if (!resp.ok) break;
+
+                const data = await resp.json();
+                const offers = data.offers || [];
+                allOffers.push(...offers);
+
+                if (!data.paging || offers.length < pageSize) break; //
+
+                page++;
+            }
+
+            return allOffers;
+        },
+
+        // --- unite network and network_offer_id ---
+        async getMergedOffers() {
+            const [affOffers, netOffers] = await Promise.all([this.getAllOffers(), this.getNetworkOffers()]);
+            // map
+            const netMap = {};
+            for (const n of netOffers) {
+                netMap[n.network_offer_id] = n;
+            }
+            //
+            return affOffers.map(a => ({
+                ...a,
+                network_data: netMap[a.network_offer_id] || null
+            }));
+        }
+    };
+
+    // ---- UI Render Functions ----
+    const app = document.getElementById('app');
+
+    function render(html) {
+        app.innerHTML = html;
+    }
+
+    // -- Navigation
+    function goto(view, data) {
+        window.scrollTo(0, 0); // for mobile mini-app UX
+        routes[view](data);
+    }
+
+    // -- Views/Routes
+    const routes = {
+        login: () => {
+            render(`
+           <h2>👋 Welcome!</h2>
+          <div class="mb">Please enter your Affiliate <b>API Key</b> to authenticate:</div>
+          <input class="input" id="apiKey" placeholder="Paste your API key">
+          <button class="btn" id="btnLogin">Log in</button>
+          ${state.user.api_key ? `<button class="btn secondary" id="btnClear">Reset</button>` : ''}
+        `);
+            document.getElementById('btnLogin').onclick = async () => {
+                const apiKey = document.getElementById('apiKey').value.trim();
+                if (!apiKey) return showError("Enter API Key!");
+                renderLoading("Checking API Key...");
+                const ok = await Core.validateKey(apiKey);
+                if (ok) {
+                    state.user.api_key = apiKey;
+                    state.user.authorized = true;
+                    saveUser();
+                    goto('menu');
+                } else {
+                    showError("❌ Invalid API Key. Please try again.");
+                }
+            };
+            if (state.user.api_key)
+                document.getElementById('btnClear').onclick = () => {
+                    resetUser();
+                    goto('login');
+                };
+        },
+
+        menu: () => {
+            render(`
+          <h2>Main Menu</h2>
+          <button class="btn" id="btnOffers">📋 Get All Offers</button>
+          <button class="btn" id="btnInvoices">💰 View invoices</button>
+          <button class="btn" id="btnPostbacks">🔄 Get All Postbacks</button>
+          <button class="btn secondary" id="btnLogout">Log out</button>
+        `);
+            document.getElementById('btnOffers').onclick = () => goto('offers');
+            document.getElementById('btnInvoices').onclick = () => goto('invoicesByStatus');
+            document.getElementById('btnPostbacks').onclick = () => goto('postbacks');
+            document.getElementById('btnLogout').onclick = () => {
+                resetUser();
+                goto('login');
+            };
+        },
+
+        // ---- offers: getMergedOffers() ----
+        offers: async () => {
+            renderLoading("Loading offers...");
+            try {
+                state.offers = await Core.getMergedOffers();
+                // console.log("OFFERS", state.offers);
+            } catch (err) {
+                return showError("❌ Error loading offers.<br><small>" + (err.message || err) + "</small>", () => goto('menu'));
+            }
+
+            if (!state.offers.length)
+                return render(`<div class="mb">No offers found.</div><button class="btn" onclick="goto('menu')">⬅️ Back to Menu</button>`);
+
+            // sort offers
+            const sortedOffers = [...state.offers].sort((a, b) => (b.daily_click_cap || 0) - (a.daily_click_cap || 0));
+
+            const offerButtons = sortedOffers.map(o => {
+                const remaining = Math.abs(o.network_data.relationship.remaining_caps.remaining_daily_payout_cap ?? 0);
+                // console.log(remaining, 'remaining')
+                let bgColor = '';
+                if (remaining === 0) {
+                    bgColor = 'background-color:#ff6b6b; color:white;'; // red
+                } else if (remaining >= 3 && remaining < 0) {
+                    bgColor = 'background-color:#ffd6d6; color:#333;'; //
+                }
+
+                return `
+                    <button class="btn secondary"
+                            onclick="goto('offerMenu',${o.network_offer_id})"
+                            style="margin-bottom:6px; text-align:left; ${bgColor}">
+                        <div><b>${o.name}</b></div>
+                        <div style="font-size:0.9em;">
+                            💰 ${o.network_data.payout}
+                            | 🎯 Daily cap: ${o.daily_click_cap ?? '—'}
+                            | 🔁 Remaining cap: ${remaining}
+                        </div>
+                    </button>
+                `;
+            }).join('');
+
+            render(`
+              <h2>📋 Offers</h2>
+              <div>${offerButtons}</div>
+              <button class="btn" onclick="goto('menu')">⬅️ Back to Menu</button>
+            `);
+        },
+
+        offerMenu: (offer_id) => {
+            const offer = state.offers.find(o => o.network_offer_id == offer_id);
+            if (!offer) return showError("Offer not found.", () => goto('offers'));
+            state.currentOffer = offer;
+            render(`
+          <h2>Offer ${offer_id} — ${offer.name}</h2>
+<!--          <button class="btn" onclick="goto('offerDetails',${offer_id})">Details Offer</button>-->
+          <button class="btn" onclick="goto('offerTracking',${offer_id})">Get Tracking URL</button>
+          <button class="btn" onclick="goto('offerCaps',${offer_id})">Caps Info</button>
+<!--          <button class="btn" onclick="goto('offerRemaining',${offer_id})">View Remaining Caps</button>-->
+          <button class="btn secondary" onclick="goto('offers')">⬅️ Back to Offers</button>
+        `);
+        },
+
+        offerDetails: (offer_id) => {
+            const offer = state.offers.find(o => o.network_offer_id == offer_id);
+            if (!offer) return showError("Offer not found.", () => goto('offers'));
+            render(`
+          <h2>Offer Details</h2>
+          <pre>${JSON.stringify(offer, null, 2)}</pre>
+          <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back to Offer</button>
+        `);
+        },
+
+        offerTracking: (offer_id) => {
+            const offer = state.offers.find(o => o.network_offer_id == offer_id);
+            const url = offer?.tracking_url || 'No tracking URL';
+            render(`
+              <h2>Tracking URL</h2>
+              <div class="mb" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <input id="trackingUrl"
+                       value="${url}"
+                       readonly
+                       style="flex:1; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:0.95em;">
+                <button class="btn" id="copyBtn">📋 Copy</button>
+              </div>
+              <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back to Offer</button>
+            `);
+
+            // copy
+            const copyBtn = document.getElementById('copyBtn');
+            const input = document.getElementById('trackingUrl');
+            copyBtn.onclick = () => {
+                navigator.clipboard.writeText(input.value).then(() => {
+                    copyBtn.textContent = '✅ Copied!';
+                    setTimeout(() => copyBtn.textContent = '📋 Copy', 1500);
+                }).catch(() => {
+                    alert('Failed to copy');
+                });
+            };
+        }
+,
+
+        offerCaps: (offer_id) => {
+            const offer = state.offers.find(o => o.network_offer_id == offer_id);
+            if (!offer) return showError("Offer not found.", () => goto('offers'));
+
+            let remainingCap = Math.abs(offer?.network_data?.relationship?.remaining_caps?.remaining_daily_payout_cap ?? 0);
+
+            if (remainingCap === null) {
+                remainingCap = 'N/A'
+            }
+
+            const caps = [
+                {name: "Daily", val: offer.daily_conversion_cap},
+                {name: "Weekly", val: offer.weekly_conversion_cap},
+                {name: "Monthly", val: offer.monthly_conversion_cap},
+                {name: "Global", val: offer.global_conversion_cap},
+                {name: "Remaining", val: remainingCap},
+            ];
+            render(`
+          <h2>Offer Caps</h2>
+          <pre>${caps.map(c => `${c.name} cap: ${c.val}`).join('\n')}</pre>
+          <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back to Offer</button>
+        `);
+        },
+
+        // ---- remaining_caps ----
+        offerRemaining: (offer_id) => {
+            const offer = state.offers.find(o => o.network_offer_id == offer_id);
+            if (!offer) return showError("Offer not found.", () => goto('offers'));
+
+            const remainingCap = Math.abs(offer?.network_data?.relationship?.remaining_caps?.remaining_daily_payout_cap ?? 0);
+
+            if (remainingCap === null) {
+                return render(`
+                    <h2>Remaining Caps</h2>
+                    <div class="mb">No remaining cap data available for this offer (network API did not return it or NETWORK_API_KEY not set).</div>
+                    <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back</button>
+                `);
+            }
+
+            render(`
+                <h2>Remaining Daily Payout Cap for Offer ${offer_id}</h2>
+                <pre>Remaining daily payout cap: ${remainingCap}</pre>
+                <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back</button>
+            `);
+        },
+
+        // offerRemaining: (offer_id) => {
+        //     const offer = state.offers.find(o => o.network_offer_id == offer_id);
+        //     if (!offer) return showError("Offer not found.", () => goto('offers'));
+        //
+        //     const caps = offer.network_data?.relationship?.remaining_caps || null;
+        //     if (!caps) {
+        //         return render(`
+        //     <h2>Remaining Caps</h2>
+        //     <div class="mb">No remaining cap data available for this offer (network API did not return it or NETWORK_API_KEY not set).</div>
+        //     <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back</button>
+        //   `);
+        //     }
+        //
+        //     const formatted = Object.entries(caps).map(([k, v]) => {
+        //         return `${k.replace(/_/g, ' ')}: ${v}`;
+        //     }).join('\n');
+        //
+        //     render(`
+        //   <h2>Remaining Caps for Offer ${offer_id}</h2>
+        //   <pre>${formatted}</pre>
+        //   <button class="btn secondary" onclick="goto('offerMenu',${offer_id})">⬅️ Back</button>
+        // `);
+        // },
+
+        invoicesByStatus: async () => {
+            render(`
+          <h2>💰 View invoices</h2>
+          <button class="btn" id="btnPaid">Get Invoices Status Paid</button>
+          <button class="btn" id="btnUnpaid">Get Invoices Status Unpaid</button>
+          <button class="btn secondary" onclick="goto('menu')">⬅️ Back to Menu</button>
+        `);
+
+            document.getElementById('btnPaid').onclick = async () => {
+                renderLoading("Loading Paid invoices...");
+                try {
+                    const data = await Core.getAllInvoices();
+                    const paidInvs = (data.invoices || []).filter(inv => inv.affiliate_invoice_status.toLowerCase() === 'paid');
+                    if (!paidInvs.length) return render(`<div class="mb">No paid invoices found.</div><button class="btn" onclick="goto('invoicesByStatus')">⬅️ Back</button>`);
+                    render(`
+              <h2>💵 Paid Invoices</h2>
+              <div style="font-size:1.1em;">
+                ${paidInvs.map(inv => `
+                  <div style="border-bottom:1px solid #eee;padding:0.6em 0;">
+                    <b>ID:</b> ${inv.network_affiliate_invoice_id}<br>
+                    <b>Date:</b> ${formatDate(inv.time_created)}<br>
+                    <b>Balance:</b> ${inv.balance}<br>
+                    <b>Status:</b> ${inv.affiliate_invoice_status}
+                  </div>
+                `).join('')}
+              </div>
+              <button class="btn secondary" onclick="goto('invoicesByStatus')">⬅️ Back</button>
+            `);
+                } catch (err) {
+                    showError("❌ Error loading invoices.<br><small>" + (err.message || err) + "</small>", () => goto('invoicesByStatus'));
+                }
+            };
+
+            document.getElementById('btnUnpaid').onclick = async () => {
+                renderLoading("Loading Unpaid invoices...");
+                try {
+                    const data = await Core.getAllInvoices();
+                    const unpaidInvs = (data.invoices || []).filter(inv => inv.affiliate_invoice_status.toLowerCase() === 'unpaid');
+                    if (!unpaidInvs.length) return render(`<div class="mb">No unpaid invoices found.</div><button class="btn" onclick="goto('invoicesByStatus')">⬅️ Back</button>`);
+                    render(`
+              <h2>💸 Unpaid Invoices</h2>
+              <div style="font-size:1.1em;">
+                ${unpaidInvs.map(inv => `
+                  <div style="border-bottom:1px solid #eee;padding:0.6em 0;">
+                    <b>ID:</b> ${inv.network_affiliate_invoice_id}<br>
+                    <b>Date:</b> ${formatDate(inv.time_created)}<br>
+                    <b>Balance:</b> ${inv.balance}<br>
+                    <b>Status:</b> ${inv.affiliate_invoice_status}
+                  </div>
+                `).join('')}
+              </div>
+              <button class="btn secondary" onclick="goto('invoicesByStatus')">⬅️ Back</button>
+            `);
+                } catch (err) {
+                    showError("❌ Error loading invoices.<br><small>" + (err.message || err) + "</small>", () => goto('invoicesByStatus'));
+                }
+            };
+        },
+
+        // Postbacks
+        postbacks: async () => {
+            renderLoading("Loading Postbacks...");
+            try {
+                const pixels = await Core.getAllPostbacks();
+                if (!pixels.length) {
+                    render(`
+              <h2>🔄 Postbacks</h2>
+              <div>No postbacks found.</div>
+              <button class="btn secondary" onclick="goto('menu')">⬅️ Back to Menu</button>
+            `);
+                    return;
+                }
+                render(`
+            <h2>🔄 Postbacks</h2>
+            <div style="font-size:1.1em;">
+              ${pixels.map(px => `
+                <div style="border-bottom:1px solid #ddd;padding:0.6em 0;">
+                  <b>ID:</b> ${px.network_pixel_id}<br>
+                  <b>Postback Status:</b> ${px.pixel_status || "N/A"}<br>
+                  <b>Postback Type:</b> ${px.pixel_type || "N/A"}<br>
+                  <b>Postback URL:</b> <a href="${px.postback_url}" target="_blank">${px.postback_url}</a><br>
+                  <b>Offer:</b> ${px.relationship?.offer?.name || "N/A"}
+                </div>
+              `).join('')}
+            </div>
+            <button class="btn secondary" onclick="goto('menu')">⬅️ Back to Menu</button>
+          `);
+            } catch (err) {
+                showError("❌ Error loading postbacks.<br><small>" + (err.message || err) + "</small>", () => goto('menu'));
+            }
+        },
+
+    };
+
+    // ---- Util functions ----
+    function formatDate(ts) {
+        if (!ts) return '';
+        const d = new Date(ts * 1000);
+        return d.toLocaleDateString() + " " + d.toLocaleTimeString();
+    }
+
+    function renderLoading(msg) {
+        render(`<div class="loading">${msg}</div>`);
+    }
+
+    function showError(msg, cb) {
+        render(`
+  <div class="error">${msg}</div>
+  <button class="btn" onclick="${cb ? 'cbError()' : `goto(${state.user.authorized ? "'menu'" : "'login'"})`}">Back</button>
+`);
+
+        window.cbError = cb || (() => goto(state.user.authorized ? 'menu' : 'login'));
+    }
+
+    // ---- App Bootstrap ----
+    window.goto = goto;
+    if (!state.user.authorized) goto('login');
+    else goto('menu');
+</script>
+</body>
+
+</html>
